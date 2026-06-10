@@ -5,7 +5,7 @@
 This lab demonstrates hands-on network traffic analysis using Wireshark, the industry-standard open-source packet capture tool. It covers live traffic capture, display filter construction, DNS query/response inspection, TCP three-way handshake observation, cleartext credential exposure over HTTP, and full TCP stream reconstruction — reflecting real-world workflows used by SOC analysts, network engineers, and incident responders.
 
 **Tool:** Wireshark (free, open source — no account or licence required)  
-**Platform:** Local machine (Windows, macOS, or Linux) or Azure VM  
+**Platform:** Microsoft Azure — Windows Server 2025 VM provisioned via Azure CLI  
 **Automation:** PowerShell (`Start-HttpTestServer.ps1`, `Invoke-TsharkCapture.ps1`)  
 **Certification Alignment:** CompTIA Network+ · Security+ · CySA+
 
@@ -23,76 +23,32 @@ The analytical skills built here transfer directly to cloud-native tooling — A
 
 ## Prerequisites
 
-- Wireshark installed (see Step 1) — free, no account required
-- PowerShell 5.1+ (Windows) or Bash (macOS/Linux)
-- A web browser
+- Azure subscription with permissions to create Resource Groups, VMs, VNets, and NSGs
+- Azure CLI installed locally (`az --version` to verify)
+- Windows Remote Desktop client
+- PowerShell 5.1+ (available on Windows Server 2025 by default)
 - Basic familiarity with IP networking concepts (IP addresses, ports, protocols)
 
 ---
 
-## Architecture — How Wireshark Captures Traffic
+## Architecture
 
-```
-Internet (DNS :53 · HTTP :80 · HTTPS :443 · ICMP · TCP/UDP)
-          │
-          ▼
-  Router / Switch  ──── forwards all frames
-          │
-          ▼
-  Network Interface Card (NIC)
-  Promiscuous mode — captures ALL packets on the network segment
-          │
-          ▼
-  Wireshark Engine
-  Decodes every packet · applies display filters · reassembles streams
-          │
-    ┌─────┼──────────┬──────────┐
-    ▼     ▼          ▼          ▼
- Capture  Filter   Analyse    Export
- live     dns /    protocols  .pcapng
- traffic  ip.addr  & streams  for portfolio
-```
-
-| Layer | Role |
-|---|---|
-| Network Interface Card | Captures raw frames in promiscuous mode — not just frames addressed to your machine |
-| Wireshark Engine | Decodes protocol layers, applies display filters, reassembles TCP streams |
-| Analysis Pipeline | Capture → Filter → Analyse → Export to .pcapng |
+| Resource | Name | Type |
+|---|---|---|
+| Resource Group | `rg-lab02-0626` | Azure Resource Group |
+| Virtual Machine | `ws01` | `Microsoft.Compute/virtualMachine` |
+| Virtual Network | `ws01-vnet` | Azure VNet |
+| Network Security Group | `ws01-nsg` | Azure NSG |
 
 ---
 
 ## Steps
 
-### 1. Install Wireshark
-
-Download from [wireshark.org/download.html](https://www.wireshark.org/download.html) — no account, no trial, no licence required.
-
-| OS | Download | Notes |
-|---|---|---|
-| Windows | Windows x64 Installer (.exe) | Accept all defaults. Install **Npcap** when prompted — required for packet capture |
-| macOS | macOS Arm or Intel (.dmg) | Allow **ChmodBPF** if prompted — grants interface access permission |
-| Linux | Package manager | `sudo apt install wireshark` · Add yourself to the `wireshark` group |
-
-```powershell
-# Windows — verify installation
-& "C:\Program Files\Wireshark\tshark.exe" --version
-```
-
-```bash
-# Linux — add yourself to the wireshark group, then log out/in
-sudo usermod -aG wireshark $USER
-wireshark --version
-```
-
-![Wireshark installation and version verification](screenshots/wireshark-install-verify.png)
-
----
-
-### 2. Initialize the Project Repository
+### 1. Initialize the Project Repository
 
 Create the local project directory, initialize Git, and scaffold the folder structure.
 
-```bash
+```powershell
 mkdir wireshark-lab2
 cd wireshark-lab2
 git init
@@ -100,11 +56,88 @@ echo "# Wireshark Network Analysis Lab" > README.md
 mkdir scripts screenshots
 ```
 
-![Repository initialized and folder structure scaffolded](screenshots/repo-init.png)
+![Initialize repo and create scripts directory](screenshots/repo-init.png)
 
 ---
 
-### 3. Your First Capture — Orient Yourself
+### 2. Deploy the Azure Virtual Machine
+
+Provision a Windows Server 2025 VM to Azure using the Azure CLI. The deployment creates the VM, a VNet, and an NSG in a single operation under resource group `rg-lab02-0626`.
+
+- **VM Name:** `ws01`
+- **Subscription:** Azure subscription 1
+- **Resource Group:** `rg-lab02-0626`
+- **Image:** Windows Server 2025 Datacenter
+- **Size:** Standard_B2s
+
+```bash
+# Create the resource group
+az group create --name rg-lab02-0626 --location eastus
+
+# Deploy the Windows Server 2025 VM
+az vm create \
+  --resource-group rg-lab02-0626 \
+  --name ws01 \
+  --image Win2025Datacenter \
+  --admin-username azureuser \
+  --admin-password 'YourStrongPassword123!' \
+  --public-ip-sku Standard \
+  --size Standard_B2s
+
+# Open RDP port 3389
+az vm open-port --resource-group rg-lab02-0626 --name ws01 --port 3389
+
+# Retrieve the public IP address
+az vm list-ip-addresses \
+  --resource-group rg-lab02-0626 \
+  --name ws01 \
+  --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
+  -o tsv
+```
+
+![Azure CLI — resource group created and VM deployment complete](screenshots/azure-cli-vm-deploy.png)
+
+---
+
+### 3. Connect via Remote Desktop (RDP)
+
+Once the VM is running, retrieve its public IP from the Azure CLI output above and connect using Remote Desktop.
+
+- Authenticate with the `azureuser` credentials set during VM creation.
+
+```bash
+# Confirm VM is running before connecting
+az vm show --resource-group rg-lab02-0626 --name ws01 --query "powerState" -d -o tsv
+```
+
+![RDP connection to ws01](screenshots/rdp-connection-ws01.png)
+
+---
+
+### 4. Install Wireshark on the VM
+
+From inside the RDP session, open **PowerShell as Administrator** on `ws01` and run the following to download and silently install Wireshark with Npcap:
+
+```powershell
+# Download Wireshark installer
+$url  = "https://2.na.dl.wireshark.org/win64/Wireshark-latest-x64.exe"
+$dest = "$env:TEMP\wireshark-installer.exe"
+Invoke-WebRequest -Uri $url -OutFile $dest
+
+# Silent install — accepts defaults and installs Npcap automatically
+Start-Process -FilePath $dest -ArgumentList "/S" -Wait
+
+# Verify installation
+& "C:\Program Files\Wireshark\tshark.exe" --version
+```
+
+Both Wireshark and Npcap install silently. Npcap is the Windows packet capture driver — without it, Wireshark cannot read raw network traffic.
+
+![Wireshark installed on ws01 — tshark version confirmed](screenshots/wireshark-install-verify.png)
+
+---
+
+### 5. Your First Capture — Orient Yourself
 
 Open Wireshark. The welcome screen shows all available network interfaces with live wave graphs indicating current traffic volume.
 
@@ -119,7 +152,7 @@ You now have a packet capture in memory. The volume (hundreds or thousands of pa
 
 ---
 
-### 4. Apply Display Filters
+### 6. Apply Display Filters
 
 Type a filter into the filter bar at the top of the Wireshark window and press **Enter**. The packet list updates instantly.
 
@@ -140,7 +173,7 @@ Type a filter into the filter bar at the top of the Wireshark window and press *
 
 ---
 
-### 5. Exercise A — Capture a DNS Lookup
+### 7. Exercise A — Capture a DNS Lookup
 
 Start a capture, run `nslookup google.com` from a separate terminal window, stop the capture, and apply the `dns` filter.
 
@@ -162,7 +195,7 @@ Click the response packet → expand **Domain Name System (response)** → expan
 
 ---
 
-### 6. Exercise B — Watch the TCP Three-Way Handshake
+### 8. Exercise B — Watch the TCP Three-Way Handshake
 
 Start a capture, navigate to `http://example.com`, stop the capture, get the IP with `nslookup example.com`, then apply:
 
@@ -184,7 +217,7 @@ Find the three-packet handshake:
 
 ---
 
-### 7. Exercise C — Spot Cleartext Credentials (HTTP)
+### 9. Exercise C — Spot Cleartext Credentials (HTTP)
 
 > **Educational use only.** Only capture on networks and systems you own or have explicit permission to test.
 
@@ -208,7 +241,7 @@ Click the POST packet → expand **Hypertext Transfer Protocol** → expand **HT
 
 ---
 
-### 8. Exercise D — Follow a Full TCP Stream
+### 10. Exercise D — Follow a Full TCP Stream
 
 Capture any HTTP traffic, right-click an HTTP packet, and select **Follow → TCP Stream**.
 
@@ -222,7 +255,7 @@ Wireshark reassembles the complete conversation:
 
 ---
 
-### 9. Save and Export Captures
+### 11. Save and Export Captures
 
 ```
 # Save full capture
@@ -239,7 +272,7 @@ Apply display filter → File → Export Specified Packets → Displayed
 
 ---
 
-### 10. Commit and Push to GitHub
+### 12. Commit and Push to GitHub
 
 ```bash
 git add .
@@ -253,7 +286,9 @@ git push
 
 ## Key Skills Demonstrated
 
-- Wireshark installation and interface configuration (promiscuous mode, Npcap/ChmodBPF)
+- Azure CLI VM provisioning — resource group, VM, VNet, NSG, and RDP port configuration
+- Windows Server 2025 VM deployment and Remote Desktop access
+- Wireshark silent installation via PowerShell on a cloud-hosted VM
 - Live packet capture on active network interfaces
 - Display filter construction for DNS, TCP, HTTP, and IP-specific traffic isolation
 - DNS query and response packet analysis including A record inspection
@@ -267,17 +302,8 @@ git push
 
 ## Cleanup
 
-No cloud resources are provisioned in this lab. Wireshark captures are stored locally.
-
-To remove lab files from your machine:
+To avoid ongoing Azure charges, deallocate or delete the `ws01` VM and all associated resources from the `rg-lab02-0626` resource group when the lab is complete.
 
 ```bash
-rm -rf wireshark-lab2/
-```
-
-To uninstall Wireshark on Windows:
-
-```powershell
-# Uninstall via Settings → Apps, or from Control Panel → Programs
-# Npcap can be uninstalled separately from the same location
+az group delete --name rg-lab02-0626 --yes --no-wait
 ```

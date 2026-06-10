@@ -3,21 +3,22 @@ STANDARD OPERATING PROCEDURE: WIRESHARK NETWORK TRAFFIC ANALYSIS LAB
 ================================================================================
 
 This Standard Operating Procedure (SOP) provides an end-to-end guide for
-installing Wireshark, capturing live network traffic, applying display filters,
-and performing guided protocol analysis exercises — including DNS inspection,
-TCP handshake observation, cleartext credential capture, and full TCP stream
-reconstruction.
+provisioning a Windows Server 2025 Azure VM via Azure CLI, installing Wireshark,
+capturing live network traffic, applying display filters, and performing guided
+protocol analysis exercises — including DNS inspection, TCP handshake observation,
+cleartext credential capture, and full TCP stream reconstruction.
 
 Certification Alignment: CompTIA Network+ | Security+ | CySA+
 Career Relevance:        Network Engineer | SOC Analyst | Cloud Security Engineer
-Estimated Cost:          $0 (Wireshark is permanently free and open source)
+Platform:                Microsoft Azure — Windows Server 2025 VM via Azure CLI
+Estimated Cost:          ~$0.05–$0.10/hr for Standard_B2s while running
 Time to Complete:        2–4 hours across multiple sessions
 
 --------------------------------------------------------------------------------
 SECTION 1: LOCAL REPOSITORY SETUP (VS CODE TERMINAL)
 --------------------------------------------------------------------------------
-Before beginning the lab exercises, initialize a local Git repository to track
-captures, scripts, and documentation.
+Before provisioning the Azure environment, initialize a local Git repository on
+your workstation to track captures, scripts, and documentation.
 
 1. Open VS Code and launch a new terminal (Ctrl + ~).
 
@@ -50,53 +51,103 @@ captures, scripts, and documentation.
    * git commit: Permanently records the staged state into local Git history.
 
 --------------------------------------------------------------------------------
-SECTION 2: INSTALL WIRESHARK
+SECTION 2: DEPLOY THE AZURE VM (AZURE CLI)
 --------------------------------------------------------------------------------
-Wireshark is free and open source. No account, licence, or subscription is
-required at any point.
+Run the following from your local terminal (Azure CLI must be installed and
+authenticated via "az login" before proceeding).
 
-WINDOWS
--------
-1. Navigate to https://wireshark.org/download.html
-2. Download the Windows x64 Installer (.exe)
-3. Run the installer — accept all defaults
-4. When prompted to install Npcap, accept and install it
-   * Npcap is the Windows packet capture driver. Without it, Wireshark cannot
-     read raw network traffic. It installs as a separate Windows service.
-5. Complete the installation and launch Wireshark
+PHASE 1: CREATE THE RESOURCE GROUP
+------------------------------------
+az group create --name rg-lab02-0626 --location eastus
 
-Verify the installation by opening PowerShell and running:
+* az group create: Provisions a new Azure Resource Group — a logical container
+  for all resources in this lab.
+* --name rg-lab02-0626: Resource group name. The date suffix makes it easy to
+  identify and clean up after the lab.
+* --location eastus: Azure region. Use the region closest to you.
 
-   & "C:\Program Files\Wireshark\tshark.exe" --version
+PHASE 2: DEPLOY THE WINDOWS SERVER 2025 VM
+-------------------------------------------
+az vm create \
+  --resource-group rg-lab02-0626 \
+  --name ws01 \
+  --image Win2025Datacenter \
+  --admin-username azureuser \
+  --admin-password 'YourStrongPassword123!' \
+  --public-ip-sku Standard \
+  --size Standard_B2s
 
-macOS
------
-1. Download the macOS Arm or Intel (.dmg) from wireshark.org
-2. Open the .dmg and drag Wireshark into Applications
-3. If prompted about ChmodBPF during first launch — click Allow
-   * ChmodBPF grants Wireshark permission to access the system's BPF
-     (Berkeley Packet Filter) device, which is required for packet capture
+* az vm create: Provisions the VM along with a VNet (ws01-vnet) and NSG
+  (ws01-nsg) automatically.
+* --image Win2025Datacenter: Deploys Windows Server 2025 Datacenter edition.
+* --admin-username / --admin-password: Local administrator credentials. Use a
+  strong password — this VM will have RDP open to the internet.
+* --public-ip-sku Standard: Allocates a static Standard-tier public IP.
+* --size Standard_B2s: 2 vCPUs, 4 GB RAM — sufficient for Wireshark GUI.
 
-Linux (Ubuntu/Debian)
----------------------
-Run the following from a terminal:
+PHASE 3: OPEN RDP PORT AND RETRIEVE PUBLIC IP
+----------------------------------------------
+# Open port 3389 for Remote Desktop access
+az vm open-port --resource-group rg-lab02-0626 --name ws01 --port 3389
 
-   sudo apt update && sudo apt install wireshark -y
+# Get the public IP address to use when connecting
+az vm list-ip-addresses \
+  --resource-group rg-lab02-0626 \
+  --name ws01 \
+  --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
+  -o tsv
 
-   # Add your user to the wireshark group so you can capture without root
-   sudo usermod -aG wireshark $USER
+* az vm open-port: Adds an inbound NSG rule allowing TCP 3389 from any source.
+* az vm list-ip-addresses: Returns the public IP address assigned to ws01.
 
-   * usermod -aG wireshark: Adds your account to the wireshark system group.
-     Members of this group are allowed to open capture interfaces.
-
-   LOG OUT AND LOG BACK IN before proceeding — group membership changes
-   do not take effect in the current shell session.
-
-   # Verify installation
-   wireshark --version
+NOTE: After the deployment completes, allow 1–2 minutes for Windows to fully
+boot before attempting an RDP connection.
 
 --------------------------------------------------------------------------------
-SECTION 3: THE WIRESHARK INTERFACE (ORIENTATION)
+SECTION 3: CONNECT VIA REMOTE DESKTOP (RDP)
+--------------------------------------------------------------------------------
+1. Confirm the VM is in a running state:
+   az vm show --resource-group rg-lab02-0626 --name ws01 \
+     --query "powerState" -d -o tsv
+   Expected output: VM running
+
+2. Open Remote Desktop Connection on your local machine:
+   Windows: Start → type "mstsc" → press Enter
+   macOS:   Download "Microsoft Remote Desktop" from the App Store
+
+3. Enter the public IP address retrieved in Section 2 Phase 3
+
+4. Authenticate with:
+   Username: azureuser
+   Password: the password you set in Phase 2
+
+5. Accept the certificate warning — this is expected for lab environments
+
+--------------------------------------------------------------------------------
+SECTION 4: INSTALL WIRESHARK ON THE VM (INSIDE RDP SESSION)
+--------------------------------------------------------------------------------
+Once connected to ws01, open POWERSHELL AS AN ADMINISTRATOR and run the
+following to download and silently install Wireshark with Npcap:
+
+# Download the latest Wireshark Windows x64 installer
+$url  = "https://2.na.dl.wireshark.org/win64/Wireshark-latest-x64.exe"
+$dest = "$env:TEMP\wireshark-installer.exe"
+Invoke-WebRequest -Uri $url -OutFile $dest
+
+# Silent install — accepts all defaults and installs Npcap automatically
+Start-Process -FilePath $dest -ArgumentList "/S" -Wait
+
+# Verify the installation
+& "C:\Program Files\Wireshark\tshark.exe" --version
+
+* Invoke-WebRequest: Downloads the installer from the official Wireshark mirror.
+* /S flag: Runs the installer in silent mode — no GUI prompts, installs Npcap
+  automatically. Npcap is the Windows packet capture driver; without it,
+  Wireshark cannot open network interfaces.
+* tshark --version: Confirms both Wireshark and the tshark CLI are installed.
+
+--------------------------------------------------------------------------------
+SECTION 5: THE WIRESHARK INTERFACE (ORIENTATION)
 --------------------------------------------------------------------------------
 When you open Wireshark you will see three main areas:
 
@@ -133,7 +184,7 @@ KEY DISTINCTION: Display Filters vs Capture Filters
                     capture through multiple lenses without re-capturing.
 
 --------------------------------------------------------------------------------
-SECTION 4: ESSENTIAL DISPLAY FILTERS REFERENCE
+SECTION 6: ESSENTIAL DISPLAY FILTERS REFERENCE
 --------------------------------------------------------------------------------
 Type any of these into the Wireshark filter bar and press Enter.
 
@@ -166,7 +217,7 @@ Type any of these into the Wireshark filter bar and press Enter.
     This hides ARP packets, which are common background noise in captures.
 
 --------------------------------------------------------------------------------
-SECTION 5: EXERCISE A — CAPTURE A DNS LOOKUP
+SECTION 7: EXERCISE A — CAPTURE A DNS LOOKUP
 --------------------------------------------------------------------------------
 PURPOSE: Observe a DNS query and its response at the packet level. Understand
 the structure of an A record lookup and confirm the DNS transaction visually.
@@ -219,7 +270,7 @@ WHAT THIS DEMONSTRATES IN PRODUCTION
   investigation.
 
 --------------------------------------------------------------------------------
-SECTION 6: EXERCISE B — WATCH THE TCP THREE-WAY HANDSHAKE
+SECTION 8: EXERCISE B — WATCH THE TCP THREE-WAY HANDSHAKE
 --------------------------------------------------------------------------------
 PURPOSE: Identify the SYN → SYN-ACK → ACK sequence that establishes every TCP
 connection. Understand how to distinguish a successful connection from a refused
@@ -261,7 +312,7 @@ WHAT TO RECORD FOR YOUR PORTFOLIO
     packet list with the Flags column visible
 
 --------------------------------------------------------------------------------
-SECTION 7: EXERCISE C — SPOT CLEARTEXT CREDENTIALS (HTTP)
+SECTION 9: EXERCISE C — SPOT CLEARTEXT CREDENTIALS (HTTP)
 --------------------------------------------------------------------------------
 PURPOSE: Demonstrate that credentials submitted over HTTP (without TLS) are
 readable in plaintext by anyone who can see the network traffic.
@@ -310,7 +361,7 @@ WHAT TO RECORD FOR YOUR PORTFOLIO
   - This screenshot is compelling portfolio evidence of why HTTPS is mandatory
 
 --------------------------------------------------------------------------------
-SECTION 8: EXERCISE D — FOLLOW A FULL TCP STREAM
+SECTION 10: EXERCISE D — FOLLOW A FULL TCP STREAM
 --------------------------------------------------------------------------------
 PURPOSE: Reassemble a complete HTTP conversation from individual packets into
 a human-readable client/server dialogue.
@@ -341,7 +392,7 @@ WHAT TO RECORD FOR YOUR PORTFOLIO
     (blue) visible
 
 --------------------------------------------------------------------------------
-SECTION 9: SAVE AND EXPORT CAPTURES
+SECTION 11: SAVE AND EXPORT CAPTURES
 --------------------------------------------------------------------------------
 Save your captures as .pcapng files. These are your portfolio artefacts and
 can be reopened in Wireshark at any time for further analysis.
@@ -378,7 +429,7 @@ COMMAND-LINE CAPTURE WITH TSHARK
       -c   stop after this many packets
 
 --------------------------------------------------------------------------------
-SECTION 10: VERIFICATION CHECKLIST
+SECTION 12: VERIFICATION CHECKLIST
 --------------------------------------------------------------------------------
 Before considering the lab complete, confirm each skill independently:
 
@@ -410,7 +461,7 @@ Before considering the lab complete, confirm each skill independently:
         Commit to GitHub with a README entry describing each one.
 
 --------------------------------------------------------------------------------
-SECTION 11: GIT COMMIT AND PUSH TO GITHUB
+SECTION 13: GIT COMMIT AND PUSH TO GITHUB
 --------------------------------------------------------------------------------
 After completing all exercises and verification steps:
 
@@ -420,5 +471,18 @@ After completing all exercises and verification steps:
 
 This records your scripts, SOP, and capture files (or references to them) in
 your public portfolio repository.
+
+--------------------------------------------------------------------------------
+SECTION 14: CLEANUP — DELETE AZURE RESOURCES
+--------------------------------------------------------------------------------
+To avoid ongoing Azure charges, delete the resource group and all associated
+resources (VM, VNet, NSG, public IP, disk) when the lab is complete.
+
+  az group delete --name rg-lab02-0626 --yes --no-wait
+
+* az group delete: Permanently removes the resource group and everything in it.
+* --yes: Skips the confirmation prompt.
+* --no-wait: Returns control to the terminal immediately — deletion runs in the
+  background in Azure. You can verify completion in the Azure portal.
 
 ================================================================================
