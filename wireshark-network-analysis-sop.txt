@@ -1,0 +1,424 @@
+================================================================================
+STANDARD OPERATING PROCEDURE: WIRESHARK NETWORK TRAFFIC ANALYSIS LAB
+================================================================================
+
+This Standard Operating Procedure (SOP) provides an end-to-end guide for
+installing Wireshark, capturing live network traffic, applying display filters,
+and performing guided protocol analysis exercises — including DNS inspection,
+TCP handshake observation, cleartext credential capture, and full TCP stream
+reconstruction.
+
+Certification Alignment: CompTIA Network+ | Security+ | CySA+
+Career Relevance:        Network Engineer | SOC Analyst | Cloud Security Engineer
+Estimated Cost:          $0 (Wireshark is permanently free and open source)
+Time to Complete:        2–4 hours across multiple sessions
+
+--------------------------------------------------------------------------------
+SECTION 1: LOCAL REPOSITORY SETUP (VS CODE TERMINAL)
+--------------------------------------------------------------------------------
+Before beginning the lab exercises, initialize a local Git repository to track
+captures, scripts, and documentation.
+
+1. Open VS Code and launch a new terminal (Ctrl + ~).
+
+2. Create and navigate to your project directory:
+
+   mkdir wireshark-lab2
+   cd wireshark-lab2
+
+   * mkdir: Creates a new folder.
+   * cd: Changes the terminal's working directory into that folder.
+
+3. Initialize the Git repository:
+
+   git init
+
+   * git init: Creates a hidden .git directory, turning the folder into a
+     version-controlled repository.
+
+4. Scaffold the project structure:
+
+   echo "# Wireshark Network Analysis Lab" > README.md
+   mkdir scripts screenshots
+
+5. Stage and commit the baseline:
+
+   git add .
+   git commit -m "initial commit: wireshark lab project structure"
+
+   * git add .: Stages all new files for the next commit snapshot.
+   * git commit: Permanently records the staged state into local Git history.
+
+--------------------------------------------------------------------------------
+SECTION 2: INSTALL WIRESHARK
+--------------------------------------------------------------------------------
+Wireshark is free and open source. No account, licence, or subscription is
+required at any point.
+
+WINDOWS
+-------
+1. Navigate to https://wireshark.org/download.html
+2. Download the Windows x64 Installer (.exe)
+3. Run the installer — accept all defaults
+4. When prompted to install Npcap, accept and install it
+   * Npcap is the Windows packet capture driver. Without it, Wireshark cannot
+     read raw network traffic. It installs as a separate Windows service.
+5. Complete the installation and launch Wireshark
+
+Verify the installation by opening PowerShell and running:
+
+   & "C:\Program Files\Wireshark\tshark.exe" --version
+
+macOS
+-----
+1. Download the macOS Arm or Intel (.dmg) from wireshark.org
+2. Open the .dmg and drag Wireshark into Applications
+3. If prompted about ChmodBPF during first launch — click Allow
+   * ChmodBPF grants Wireshark permission to access the system's BPF
+     (Berkeley Packet Filter) device, which is required for packet capture
+
+Linux (Ubuntu/Debian)
+---------------------
+Run the following from a terminal:
+
+   sudo apt update && sudo apt install wireshark -y
+
+   # Add your user to the wireshark group so you can capture without root
+   sudo usermod -aG wireshark $USER
+
+   * usermod -aG wireshark: Adds your account to the wireshark system group.
+     Members of this group are allowed to open capture interfaces.
+
+   LOG OUT AND LOG BACK IN before proceeding — group membership changes
+   do not take effect in the current shell session.
+
+   # Verify installation
+   wireshark --version
+
+--------------------------------------------------------------------------------
+SECTION 3: THE WIRESHARK INTERFACE (ORIENTATION)
+--------------------------------------------------------------------------------
+When you open Wireshark you will see three main areas:
+
+  Welcome Screen      — Lists all available network interfaces. Each interface
+                        shows a live wave graph indicating current traffic
+                        volume. Double-click any interface to begin capturing.
+
+  Packet List Pane    — The top panel during a capture. Each row is one packet.
+                        Columns show: packet number, timestamp, source IP,
+                        destination IP, protocol, length, and a summary in
+                        the Info column.
+
+  Packet Detail Pane  — The middle panel. When you click a packet in the list,
+                        this panel shows the full decoded protocol stack —
+                        Ethernet frame, IP header, TCP/UDP header, and
+                        application layer payload. Click any arrow to expand
+                        a layer and inspect individual fields.
+
+  Packet Bytes Pane   — The bottom panel. Shows the raw hex and ASCII
+                        representation of the selected packet. Most exercises
+                        in this lab do not require this pane.
+
+  Filter Bar          — The input bar at the top of the packet list. Type a
+                        display filter here and press Enter to narrow the
+                        packet list to only matching traffic.
+
+KEY DISTINCTION: Display Filters vs Capture Filters
+  Capture Filters:  Applied BEFORE the capture begins. They limit what gets
+                    recorded to disk. Use only when you know exactly what you
+                    want and need to reduce file size.
+  Display Filters:  Applied AFTER the capture. They limit what is VISIBLE
+                    without discarding captured data. For this lab, always use
+                    display filters — they allow you to re-examine the same
+                    capture through multiple lenses without re-capturing.
+
+--------------------------------------------------------------------------------
+SECTION 4: ESSENTIAL DISPLAY FILTERS REFERENCE
+--------------------------------------------------------------------------------
+Type any of these into the Wireshark filter bar and press Enter.
+
+  Filter                      What It Shows
+  --------------------------  -----------------------------------------------
+  dns                         All DNS queries and responses
+  http                        Unencrypted HTTP traffic only
+  tcp                         All TCP traffic
+  tcp.flags.syn == 1          TCP SYN packets (connection attempts only)
+  tcp.flags.reset == 1        TCP RST packets (refused/forcibly closed connections)
+  icmp                        All ICMP traffic including ping
+  ip.addr == 192.168.1.1      All traffic to or from a specific IP address
+  ip.src == 10.0.0.5          Outbound traffic from one specific source IP
+  tcp.port == 443             All traffic on port 443 (HTTPS)
+  http.request                HTTP GET and POST requests only
+  http.request.method == POST HTTP POST requests only (login form submissions)
+
+  COMBINING FILTERS
+  -----------------
+  Use "and" to require multiple conditions:
+    tcp and ip.addr == 93.184.216.34
+    This shows only TCP traffic to or from that specific IP.
+
+  Use "or" to match either condition:
+    dns or icmp
+    This shows DNS and ICMP packets together.
+
+  Use "!" to exclude:
+    !arp
+    This hides ARP packets, which are common background noise in captures.
+
+--------------------------------------------------------------------------------
+SECTION 5: EXERCISE A — CAPTURE A DNS LOOKUP
+--------------------------------------------------------------------------------
+PURPOSE: Observe a DNS query and its response at the packet level. Understand
+the structure of an A record lookup and confirm the DNS transaction visually.
+
+BACKGROUND
+  DNS (Domain Name System) translates human-readable domain names into IP
+  addresses. Every website visit, API call, and email delivery begins with a
+  DNS query. In Wireshark, you can see this query leave your machine and the
+  response come back — with the IP address inside.
+
+  nslookup is a built-in command-line tool that performs a manual DNS query.
+  It is used here to trigger DNS traffic on demand so Wireshark can capture it.
+  Run nslookup from your terminal (Command Prompt on Windows, Terminal on Mac/
+  Linux) — NOT inside Wireshark. Wireshark is a capture and analysis tool only;
+  it has no terminal.
+
+STEPS
+  1.  Open Wireshark
+  2.  On the welcome screen, double-click your active network interface
+      (the one with the most wave graph activity — usually "Ethernet" or "Wi-Fi")
+  3.  Wireshark begins capturing immediately — packets start appearing in real time
+  4.  Open a separate terminal window (do NOT stop the Wireshark capture)
+         Windows: Windows key → type cmd → press Enter
+         Mac:     Cmd + Space → type Terminal → press Enter
+         Linux:   Ctrl + Alt + T
+  5.  In the terminal, run:
+         nslookup google.com
+      The terminal will display the IP address(es) DNS returned for google.com
+  6.  Switch back to Wireshark and click the red square Stop button in the toolbar
+  7.  In the filter bar, type:
+         dns
+      Press Enter. The packet list now shows only DNS traffic.
+  8.  In the Info column, find:
+         "Standard query A google.com"       ← this is your outbound query
+         "Standard query response A google.com" ← this is the DNS server's reply
+  9.  Click the response packet to select it
+  10. In the Packet Detail pane, expand "Domain Name System (response)"
+  11. Expand the "Answers" section — you will see the A record entry
+  12. Confirm the IP address shown matches what your terminal displayed
+
+WHAT TO RECORD FOR YOUR PORTFOLIO
+  - Screenshot of the DNS query packet with the Info column visible
+  - Screenshot of the DNS response packet with the Answers section expanded
+  - Note the matching transaction IDs in both packets
+
+WHAT THIS DEMONSTRATES IN PRODUCTION
+  Unexpected DNS queries to unknown or unusual domains in a capture are often
+  the first indicator of malware phoning home to a command-and-control server.
+  SOC analysts apply the dns filter as a first step in any suspicious-host
+  investigation.
+
+--------------------------------------------------------------------------------
+SECTION 6: EXERCISE B — WATCH THE TCP THREE-WAY HANDSHAKE
+--------------------------------------------------------------------------------
+PURPOSE: Identify the SYN → SYN-ACK → ACK sequence that establishes every TCP
+connection. Understand how to distinguish a successful connection from a refused
+or dropped one.
+
+BACKGROUND
+  Every TCP connection begins with a three-packet handshake before any data is
+  transferred. If you see a SYN with no following SYN-ACK, the server is
+  unreachable or the connection was blocked. If you see a RST (reset) packet,
+  the connection was forcibly terminated. These two patterns are the primary
+  diagnostic signals when troubleshooting connectivity failures.
+
+STEPS
+  1.  Start a new capture in Wireshark on your active interface
+  2.  Open a browser and navigate to: http://example.com
+      Use HTTP (not HTTPS) — HTTPS uses TLS which obscures the TCP data,
+      making the handshake harder to observe for learning purposes
+  3.  After the page loads, stop the capture
+  4.  Open a terminal and run:
+         nslookup example.com
+      Note the IP address returned (it will be 93.184.216.34 for example.com)
+  5.  In the Wireshark filter bar, type:
+         tcp and ip.addr == 93.184.216.34
+      Press Enter
+  6.  Find the three-packet sequence in order:
+
+         Packet 1  Flags: SYN          Your machine: "I want to connect. Here
+                                        is my sequence number."
+         Packet 2  Flags: SYN, ACK     Server: "I got your request. Here is my
+                                        sequence number. Connection accepted."
+         Packet 3  Flags: ACK          Your machine: "Got it. Connection open.
+                                        Ready to send data."
+
+  7.  Click each packet in the three-packet sequence and confirm the Flags field
+      in the Packet Detail pane matches the above
+
+WHAT TO RECORD FOR YOUR PORTFOLIO
+  - Screenshot showing the three-packet SYN → SYN-ACK → ACK sequence in the
+    packet list with the Flags column visible
+
+--------------------------------------------------------------------------------
+SECTION 7: EXERCISE C — SPOT CLEARTEXT CREDENTIALS (HTTP)
+--------------------------------------------------------------------------------
+PURPOSE: Demonstrate that credentials submitted over HTTP (without TLS) are
+readable in plaintext by anyone who can see the network traffic.
+
+EDUCATIONAL NOTICE: This exercise must only be performed on systems you own or
+have explicit written permission to test. Never use packet capture against
+systems or networks you do not control.
+
+BACKGROUND
+  HTTP transmits all data as plaintext. This includes the contents of login
+  forms — usernames and passwords are sent as readable text inside the POST
+  request body. HTTPS adds TLS encryption, which encrypts the payload so it
+  cannot be read even if captured. This exercise demonstrates the exact
+  vulnerability that made HTTPS mandatory for any site handling sensitive data.
+
+SETUP — START A LOCAL HTTP TEST SERVER (PowerShell)
+  Run the provided script: scripts\Start-HttpTestServer.ps1
+  This launches a minimal HTTP server on http://localhost:8080 that serves
+  a login form. Submit the form with any test credentials.
+  (See scripts\Start-HttpTestServer.ps1 for the full script and usage notes.)
+
+  Alternatively, use http://testphp.vulnweb.com — a deliberately vulnerable
+  web application maintained for security education purposes that runs over HTTP.
+
+STEPS
+  1.  Start the local HTTP test server using the provided script, or navigate
+      to a known HTTP test site
+  2.  Start a capture in Wireshark on your loopback or active interface
+         For localhost: select the "Loopback: lo" interface (Mac/Linux)
+                        or the "Adapter for loopback traffic capture" (Windows)
+         For a remote HTTP site: use your regular Ethernet/Wi-Fi interface
+  3.  Submit a login form over HTTP with test credentials
+         Example: username = testuser | password = TestPassword123
+  4.  Stop the capture
+  5.  In the filter bar, type:
+         http.request.method == POST
+      Press Enter
+  6.  Click the POST packet
+  7.  In the Packet Detail pane, expand:
+         "Hypertext Transfer Protocol" → "HTML Form URL Encoded"
+  8.  You will see the username and password fields in plaintext inside the packet
+
+WHAT TO RECORD FOR YOUR PORTFOLIO
+  - Screenshot of the POST packet with the HTML Form URL Encoded section expanded
+    showing the plaintext credentials
+  - This screenshot is compelling portfolio evidence of why HTTPS is mandatory
+
+--------------------------------------------------------------------------------
+SECTION 8: EXERCISE D — FOLLOW A FULL TCP STREAM
+--------------------------------------------------------------------------------
+PURPOSE: Reassemble a complete HTTP conversation from individual packets into
+a human-readable client/server dialogue.
+
+BACKGROUND
+  Individual packets are fragments. A TCP stream is the complete conversation
+  reassembled in order. Incident responders use stream reconstruction to
+  understand what data was sent, what commands were issued, and how the server
+  responded — all from a raw packet capture.
+
+STEPS
+  1.  Start a capture on your active interface
+  2.  Open a browser and navigate to any HTTP website (e.g. http://example.com)
+  3.  Stop the capture after the page loads
+  4.  In the filter bar, type:
+         http
+      Press Enter to isolate HTTP traffic
+  5.  Right-click any HTTP packet in the list
+  6.  Select: Follow → TCP Stream
+  7.  Wireshark opens a Stream Content window showing the full conversation:
+         Red text  = your browser's outbound request (HTTP GET headers, etc.)
+         Blue text = the server's inbound response (HTTP headers + HTML body)
+  8.  Read through the stream — identify the GET request, the response headers,
+      and the HTML content in the body
+
+WHAT TO RECORD FOR YOUR PORTFOLIO
+  - Screenshot of the TCP Stream window with both the request (red) and response
+    (blue) visible
+
+--------------------------------------------------------------------------------
+SECTION 9: SAVE AND EXPORT CAPTURES
+--------------------------------------------------------------------------------
+Save your captures as .pcapng files. These are your portfolio artefacts and
+can be reopened in Wireshark at any time for further analysis.
+
+SAVE THE FULL CAPTURE
+  File → Save As → choose .pcapng format
+  Name your files descriptively:
+    dns-lookup-google.pcapng
+    tcp-handshake-example.pcapng
+    http-cleartext-creds.pcapng
+    tcp-stream-follow.pcapng
+
+EXPORT ONLY FILTERED PACKETS
+  Apply a display filter to narrow the view
+  File → Export Specified Packets → select "Displayed" → Save
+
+RE-OPEN A SAVED CAPTURE
+  File → Open → select the .pcapng file
+  All packets will be restored exactly as captured
+
+COMMAND-LINE CAPTURE WITH TSHARK
+  tshark is the terminal-based version of Wireshark, included in the
+  installation. Use it to capture on remote servers or automate captures.
+
+  See scripts\Invoke-TsharkCapture.ps1 for a PowerShell wrapper that:
+    - Detects the active network interface
+    - Runs a timed tshark capture
+    - Saves the output to a named .pcapng file
+
+  Manual tshark usage:
+    tshark -i eth0 -w capture.pcapng -c 1000
+      -i   network interface name
+      -w   output file path
+      -c   stop after this many packets
+
+--------------------------------------------------------------------------------
+SECTION 10: VERIFICATION CHECKLIST
+--------------------------------------------------------------------------------
+Before considering the lab complete, confirm each skill independently:
+
+  [ ] DNS capture
+        Apply the dns filter and identify a matching query and response packet.
+        Confirm they share the same transaction ID in the packet detail.
+
+  [ ] TCP handshake
+        Locate three sequential packets with SYN, SYN-ACK, and ACK flags.
+        Explain verbally what each packet means without referring to notes.
+
+  [ ] Display filters
+        Filter by IP address, protocol, and port from memory.
+        Chain two filters with "and" to isolate traffic for one host on one port.
+
+  [ ] Stream reconstruction
+        Follow a TCP stream and read the full HTTP request and response.
+        Identify the HTTP method, the requested path, and the response code.
+
+  [ ] File management
+        Save a capture as .pcapng, close Wireshark completely, reopen it, and
+        load the file. Confirm all packets are present.
+
+  [ ] Portfolio commits
+        Save three .pcapng files to the screenshots/ folder:
+          - dns-lookup-google.pcapng
+          - tcp-handshake-example.pcapng
+          - tcp-stream-follow.pcapng
+        Commit to GitHub with a README entry describing each one.
+
+--------------------------------------------------------------------------------
+SECTION 11: GIT COMMIT AND PUSH TO GITHUB
+--------------------------------------------------------------------------------
+After completing all exercises and verification steps:
+
+  git add .
+  git commit -m "feat: wireshark lab2 — dns, tcp handshake, cleartext creds, stream analysis"
+  git push
+
+This records your scripts, SOP, and capture files (or references to them) in
+your public portfolio repository.
+
+================================================================================
