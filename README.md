@@ -72,28 +72,28 @@ Provision a Windows Server 2025 VM to Azure using the Azure CLI. The deployment 
 - **Image:** Windows Server 2025 Datacenter
 - **Size:** Standard_B2s
 
-```bash
+```powershell
 # Create the resource group
 az group create --name rg-lab02-0626 --location eastus
 
 # Deploy the Windows Server 2025 VM
-az vm create \
-  --resource-group rg-lab02-0626 \
-  --name ws01 \
-  --image Win2025Datacenter \
-  --admin-username azureuser \
-  --admin-password 'YourStrongPassword123!' \
-  --public-ip-sku Standard \
+az vm create `
+  --resource-group rg-lab02-0626 `
+  --name ws01 `
+  --image Win2025Datacenter `
+  --admin-username azureuser `
+  --admin-password 'YourStrongPassword123!' `
+  --public-ip-sku Standard `
   --size Standard_B2s
 
 # Open RDP port 3389
 az vm open-port --resource-group rg-lab02-0626 --name ws01 --port 3389
 
 # Retrieve the public IP address
-az vm list-ip-addresses \
-  --resource-group rg-lab02-0626 \
-  --name ws01 \
-  --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
+az vm list-ip-addresses `
+  --resource-group rg-lab02-0626 `
+  --name ws01 `
+  --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" `
   -o tsv
 ```
 

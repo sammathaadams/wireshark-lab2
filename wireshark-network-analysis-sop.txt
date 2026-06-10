@@ -68,14 +68,17 @@ az group create --name rg-lab02-0626 --location eastus
 
 PHASE 2: DEPLOY THE WINDOWS SERVER 2025 VM
 -------------------------------------------
-az vm create \
-  --resource-group rg-lab02-0626 \
-  --name ws01 \
-  --image Win2025Datacenter \
-  --admin-username azureuser \
-  --admin-password 'YourStrongPassword123!' \
-  --public-ip-sku Standard \
+az vm create `
+  --resource-group rg-lab02-0626 `
+  --name ws01 `
+  --image Win2025Datacenter `
+  --admin-username azureuser `
+  --admin-password 'YourStrongPassword123!' `
+  --public-ip-sku Standard `
   --size Standard_B2s
+
+NOTE: The backtick (`) is PowerShell's line continuation character.
+If running from Bash/WSL, replace each backtick with a backslash (\).
 
 * az vm create: Provisions the VM along with a VNet (ws01-vnet) and NSG
   (ws01-nsg) automatically.
@@ -91,10 +94,10 @@ PHASE 3: OPEN RDP PORT AND RETRIEVE PUBLIC IP
 az vm open-port --resource-group rg-lab02-0626 --name ws01 --port 3389
 
 # Get the public IP address to use when connecting
-az vm list-ip-addresses \
-  --resource-group rg-lab02-0626 \
-  --name ws01 \
-  --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" \
+az vm list-ip-addresses `
+  --resource-group rg-lab02-0626 `
+  --name ws01 `
+  --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" `
   -o tsv
 
 * az vm open-port: Adds an inbound NSG rule allowing TCP 3389 from any source.
