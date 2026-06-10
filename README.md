@@ -33,6 +33,8 @@ The analytical skills built here transfer directly to cloud-native tooling — A
 
 ## Architecture
 
+![Lab 2 Azure Architecture — ws01 Wireshark Analysis Station](screenshots/architecture.svg)
+
 | Resource | Name | Type |
 |---|---|---|
 | Resource Group | `rg-lab02-0626` | Azure Resource Group |
