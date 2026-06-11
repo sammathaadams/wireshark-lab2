@@ -267,6 +267,8 @@ git commit -m "feat: wireshark lab2 — dns, tcp handshake, cleartext creds, str
 git push
 ```
 
+![Git commit and push — 12 files changed, all screenshots tracked, pushed to GitHub](screenshots/git-commit-push.png)
+
 ---
 
 ## Key Skills Demonstrated
