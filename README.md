@@ -58,8 +58,6 @@ echo "# Wireshark Network Analysis Lab" > README.md
 mkdir scripts screenshots
 ```
 
-![Initialize repo and create scripts directory](screenshots/repo-init.png)
-
 ---
 
 ### 2. Deploy the Azure Virtual Machine
@@ -70,34 +68,30 @@ Provision a Windows Server 2025 VM to Azure using the Azure CLI. The deployment 
 - **Subscription:** Azure subscription 1
 - **Resource Group:** `rg-lab02-0626`
 - **Image:** Windows Server 2025 Datacenter
-- **Size:** Standard_B2s
+- **Size:** Standard_D2s_v3
 
 ```powershell
 # Create the resource group
-az group create --name rg-lab02-0626 --location eastus
+az group create --name rg-lab02-0626 --location westus2
 
 # Deploy the Windows Server 2025 VM
 az vm create `
   --resource-group rg-lab02-0626 `
   --name ws01 `
-  --image Win2025Datacenter `
+  --image MicrosoftWindowsServer:WindowsServer:2025-datacenter-g2:latest `
   --admin-username azureuser `
   --admin-password 'YourStrongPassword123!' `
   --public-ip-sku Standard `
-  --size Standard_B2s
+  --size Standard_D2s_v3
 
 # Open RDP port 3389
 az vm open-port --resource-group rg-lab02-0626 --name ws01 --port 3389
 
-# Retrieve the public IP address
-az vm list-ip-addresses `
-  --resource-group rg-lab02-0626 `
-  --name ws01 `
-  --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" `
-  -o tsv
+# Note: the public IP is printed in the JSON output when az vm create completes.
+# Copy the value of "publicIpAddress" from that output — you will need it for RDP.
 ```
 
-![Azure CLI — resource group created and VM deployment complete](screenshots/azure-cli-vm-deploy.png)
+![Azure CLI — az vm create complete, publicIpAddress visible in JSON output](screenshots/azure-cli-vm-deploy.png)
 
 ---
 
@@ -118,39 +112,35 @@ az vm show --resource-group rg-lab02-0626 --name ws01 --query "powerState" -d -o
 
 ### 4. Install Wireshark on the VM
 
-From inside the RDP session, open **PowerShell as Administrator** on `ws01` and run the following to download and silently install Wireshark with Npcap:
+From inside the RDP session, open **PowerShell as Administrator** on `ws01` and install Wireshark using the official installer:
 
 ```powershell
-# Download Wireshark installer
-$url  = "https://2.na.dl.wireshark.org/win64/Wireshark-latest-x64.exe"
-$dest = "$env:TEMP\wireshark-installer.exe"
-Invoke-WebRequest -Uri $url -OutFile $dest
-
-# Silent install — accepts defaults and installs Npcap automatically
-Start-Process -FilePath $dest -ArgumentList "/S" -Wait
+# Download the Wireshark installer — Npcap is bundled and installs in the same wizard
+Invoke-WebRequest -Uri "https://2.na.dl.wireshark.org/win64/Wireshark-latest-x64.exe" -OutFile "$env:TEMP\wireshark-installer.exe"
+Start-Process -FilePath "$env:TEMP\wireshark-installer.exe" -Wait
 
 # Verify installation
 & "C:\Program Files\Wireshark\tshark.exe" --version
 ```
 
-Both Wireshark and Npcap install silently. Npcap is the Windows packet capture driver — without it, Wireshark cannot read raw network traffic.
+Accept all defaults in the installer wizard — Npcap is a checked component and installs automatically in the same wizard. No separate download or installer required.
 
-![Wireshark installed on ws01 — tshark version confirmed](screenshots/wireshark-install-verify.png)
+![Wireshark 4.6.6 setup wizard completing on ws01 via Invoke-WebRequest](screenshots/wireshark-install-verify.png)
 
 ---
 
-### 5. Your First Capture — Orient Yourself
+### 5. The Wireshark Interface — Orientation
 
-Open Wireshark. The welcome screen shows all available network interfaces with live wave graphs indicating current traffic volume.
+Open Wireshark. Before starting any exercise, familiarise yourself with the four main areas:
 
-1. Double-click your active interface (the one with the most wave graph activity — usually **Ethernet** or **Wi-Fi**)
-2. Wireshark begins capturing — packets appear in the list in real time
-3. Open a browser and navigate to any website
-4. After 30 seconds, click the **red square Stop** button in the toolbar
+| Area | Description |
+|---|---|
+| **Welcome Screen** | Lists all available network interfaces with live wave graphs. Double-click the active interface (highest wave graph activity) to begin a capture. |
+| **Packet List Pane** | Top panel during a capture — one row per packet. Columns show packet number, timestamp, source/destination IP, protocol, length, and an Info summary. |
+| **Packet Detail Pane** | Middle panel — click any packet to see the full decoded protocol stack (Ethernet → IP → TCP/UDP → application payload). Expand any layer to inspect individual fields. |
+| **Filter Bar** | Input bar above the packet list. Type a display filter and press **Enter** to narrow the visible packets without discarding the capture. |
 
-You now have a packet capture in memory. The volume (hundreds or thousands of packets from 30 seconds of browsing) is why display filters are essential.
-
-![Wireshark live capture — packets streaming in real time](screenshots/first-capture-live.png)
+> **Display vs Capture filters:** Display filters are applied *after* capture — they hide packets without discarding them. Always use display filters in this lab so you can re-examine the same capture through multiple lenses.
 
 ---
 
@@ -169,16 +159,11 @@ Type a filter into the filter bar at the top of the Wireshark window and press *
 | `ip.addr == 192.168.1.1` | All traffic to or from a specific IP |
 | `http.request.method == POST` | HTTP POST requests (login form submissions) |
 
-> **Display vs Capture filters:** Display filters are applied after capture — they hide packets without discarding them. Always use display filters in this lab so you can re-examine the same capture through multiple lenses.
-
-![Display filter applied — dns filter isolates DNS traffic](screenshots/display-filter-dns.png)
-
 ---
 
 ### 7. Exercise A — Capture a DNS Lookup
 
 Start a capture, run `nslookup google.com` from a separate terminal window, stop the capture, and apply the `dns` filter.
-
 ```cmd
 nslookup google.com
 ```
@@ -189,9 +174,7 @@ In the packet list, find:
 
 Click the response packet → expand **Domain Name System (response)** → expand **Answers** → confirm the A record IP matches the nslookup terminal output.
 
-![DNS query packet — Standard query A google.com](screenshots/dns-query-packet.png)
-
-![DNS response packet — Answers section expanded, A record IP visible](screenshots/dns-response-answers.png)
+![DNS filter applied — Standard query response packets visible, A record IP matches nslookup output](screenshots/dns-response-answers.png)
 
 > **Why this matters in production:** Unexpected DNS queries to unknown domains are one of the earliest indicators of malware phoning home to a command-and-control server. SOC analysts apply the `dns` filter as a first step in any suspicious-host investigation.
 
@@ -199,10 +182,10 @@ Click the response packet → expand **Domain Name System (response)** → expan
 
 ### 8. Exercise B — Watch the TCP Three-Way Handshake
 
-Start a capture, navigate to `http://example.com`, stop the capture, get the IP with `nslookup example.com`, then apply:
+Start a capture, navigate to `http://neverssl.com`, stop the capture, get the IP with `nslookup neverssl.com`, then apply:
 
 ```
-tcp and ip.addr == 93.184.216.34
+tcp and ip.addr == <IP from nslookup>
 ```
 
 Find the three-packet handshake:
@@ -215,7 +198,7 @@ Find the three-packet handshake:
 
 > **Diagnostic patterns:** SYN with no SYN-ACK = server unreachable or port blocked. RST packet = connection forcibly terminated. These two patterns are the primary signals when diagnosing connectivity failures.
 
-![TCP three-way handshake — SYN → SYN-ACK → ACK sequence visible in packet list](screenshots/tcp-handshake-syn-synack-ack.png)
+![TCP three-way handshake — SYN → SYN-ACK → ACK sequence with ECN flags visible](screenshots/tcp-handshake.png)
 
 ---
 
@@ -223,17 +206,21 @@ Find the three-packet handshake:
 
 > **Educational use only.** Only capture on networks and systems you own or have explicit permission to test.
 
-Start the local HTTP test server:
-
-```powershell
-.\scripts\Start-HttpTestServer.ps1
-```
-
-The script launches a login form at `http://localhost:8080`. In Wireshark, capture on the **loopback interface**. Submit the form with test credentials, stop the capture, and apply:
+In Wireshark, start a capture on your **active Ethernet interface**. Open a browser and navigate to:
 
 ```
-http.request.method == POST
+http://zero.webappsecurity.com/login.html
 ```
+
+This is a deliberately vulnerable test banking application maintained for security education — it runs over HTTP with no TLS. Enter any test credentials and click **Sign in**, stop the capture, and apply:
+
+![Zero Bank login form — credentials entered before submitting](screenshots/zero-bank-login-form.png)
+
+```
+http.request.method == POST and http.host contains "zero"
+```
+
+> **Note:** Azure VMs generate background HTTP traffic to `168.63.129.16` (Azure's internal health service). The host filter above excludes that noise and isolates only the login POST.
 
 Click the POST packet → expand **Hypertext Transfer Protocol** → expand **HTML Form URL Encoded** → username and password are visible in plaintext.
 
@@ -270,8 +257,6 @@ Apply display filter → File → Export Specified Packets → Displayed
 .\scripts\Invoke-TsharkCapture.ps1 -Interface "Wi-Fi" -OutputFile "capture.pcapng" -DurationSec 30
 ```
 
-![Capture saved as .pcapng — File → Save As dialog](screenshots/save-capture-pcapng.png)
-
 ---
 
 ### 12. Commit and Push to GitHub
@@ -282,15 +267,13 @@ git commit -m "feat: wireshark lab2 — dns, tcp handshake, cleartext creds, str
 git push
 ```
 
-![Git commit — scripts and captures staged and pushed](screenshots/git-commit-push.png)
-
 ---
 
 ## Key Skills Demonstrated
 
 - Azure CLI VM provisioning — resource group, VM, VNet, NSG, and RDP port configuration
 - Windows Server 2025 VM deployment and Remote Desktop access
-- Wireshark silent installation via PowerShell on a cloud-hosted VM
+- Wireshark installation via PowerShell on a cloud-hosted Azure VM
 - Live packet capture on active network interfaces
 - Display filter construction for DNS, TCP, HTTP, and IP-specific traffic isolation
 - DNS query and response packet analysis including A record inspection

@@ -19,9 +19,11 @@
 #   .\Invoke-TsharkCapture.ps1 -CaptureFilter "port 53" -OutputFile "dns-only.pcapng"
 #
 # REQUIREMENTS:
-#   - Wireshark must be installed (tshark.exe is included)
+#   - Wireshark must be installed using the official installer (Npcap is bundled):
+#     Invoke-WebRequest -Uri "https://2.na.dl.wireshark.org/win64/Wireshark-latest-x64.exe" -OutFile "$env:TEMP\wireshark-installer.exe"
+#     Start-Process -FilePath "$env:TEMP\wireshark-installer.exe" -Wait
+#     Accept all defaults — Npcap installs automatically as part of the same wizard.
 #   - Run from an elevated PowerShell session (required for packet capture)
-#   - Npcap must be installed (installed automatically with Wireshark on Windows)
 # ==============================================================================
 
 param(

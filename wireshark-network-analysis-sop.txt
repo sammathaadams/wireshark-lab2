@@ -11,7 +11,7 @@ cleartext credential capture, and full TCP stream reconstruction.
 Certification Alignment: CompTIA Network+ | Security+ | CySA+
 Career Relevance:        Network Engineer | SOC Analyst | Cloud Security Engineer
 Platform:                Microsoft Azure — Windows Server 2025 VM via Azure CLI
-Estimated Cost:          ~$0.05–$0.10/hr for Standard_B2s while running
+Estimated Cost:          ~$0.05–$0.10/hr for Standard_D2s_v3 while running
 Time to Complete:        2–4 hours across multiple sessions
 
 --------------------------------------------------------------------------------
@@ -58,50 +58,47 @@ authenticated via "az login" before proceeding).
 
 PHASE 1: CREATE THE RESOURCE GROUP
 ------------------------------------
-az group create --name rg-lab02-0626 --location eastus
+az group create --name rg-lab02-0626 --location westus2
 
 * az group create: Provisions a new Azure Resource Group — a logical container
   for all resources in this lab.
 * --name rg-lab02-0626: Resource group name. The date suffix makes it easy to
   identify and clean up after the lab.
-* --location eastus: Azure region. Use the region closest to you.
+* --location westus2: Azure region — West US 2.
 
 PHASE 2: DEPLOY THE WINDOWS SERVER 2025 VM
 -------------------------------------------
 az vm create `
   --resource-group rg-lab02-0626 `
   --name ws01 `
-  --image Win2025Datacenter `
+  --image MicrosoftWindowsServer:WindowsServer:2025-datacenter-g2:latest `
   --admin-username azureuser `
   --admin-password 'YourStrongPassword123!' `
   --public-ip-sku Standard `
-  --size Standard_B2s
+  --size Standard_D2s_v3
 
 NOTE: The backtick (`) is PowerShell's line continuation character.
 If running from Bash/WSL, replace each backtick with a backslash (\).
 
 * az vm create: Provisions the VM along with a VNet (ws01-vnet) and NSG
   (ws01-nsg) automatically.
-* --image Win2025Datacenter: Deploys Windows Server 2025 Datacenter edition.
+* --image MicrosoftWindowsServer:WindowsServer:2025-datacenter-g2:latest: Deploys
+  Windows Server 2025 Datacenter using the full marketplace URN (Publisher:Offer:SKU:Version).
+  This format is required when a short alias is not available for the image.
 * --admin-username / --admin-password: Local administrator credentials. Use a
   strong password — this VM will have RDP open to the internet.
 * --public-ip-sku Standard: Allocates a static Standard-tier public IP.
-* --size Standard_B2s: 2 vCPUs, 4 GB RAM — sufficient for Wireshark GUI.
+* --size Standard_D2s_v3: 2 vCPUs, 8 GiB RAM — sufficient for Wireshark GUI.
 
 PHASE 3: OPEN RDP PORT AND RETRIEVE PUBLIC IP
 ----------------------------------------------
 # Open port 3389 for Remote Desktop access
 az vm open-port --resource-group rg-lab02-0626 --name ws01 --port 3389
 
-# Get the public IP address to use when connecting
-az vm list-ip-addresses `
-  --resource-group rg-lab02-0626 `
-  --name ws01 `
-  --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" `
-  -o tsv
+NOTE: When "az vm create" completes it prints a JSON block to the terminal.
+Copy the value of "publicIpAddress" from that output — you will need it for RDP.
 
 * az vm open-port: Adds an inbound NSG rule allowing TCP 3389 from any source.
-* az vm list-ip-addresses: Returns the public IP address assigned to ws01.
 
 NOTE: After the deployment completes, allow 1–2 minutes for Windows to fully
 boot before attempting an RDP connection.
@@ -110,8 +107,7 @@ boot before attempting an RDP connection.
 SECTION 3: CONNECT VIA REMOTE DESKTOP (RDP)
 --------------------------------------------------------------------------------
 1. Confirm the VM is in a running state:
-   az vm show --resource-group rg-lab02-0626 --name ws01 \
-     --query "powerState" -d -o tsv
+   az vm show --resource-group rg-lab02-0626 --name ws01 --query "powerState" -d -o tsv
    Expected output: VM running
 
 2. Open Remote Desktop Connection on your local machine:
@@ -129,30 +125,28 @@ SECTION 3: CONNECT VIA REMOTE DESKTOP (RDP)
 --------------------------------------------------------------------------------
 SECTION 4: INSTALL WIRESHARK ON THE VM (INSIDE RDP SESSION)
 --------------------------------------------------------------------------------
-Once connected to ws01, open POWERSHELL AS AN ADMINISTRATOR and run the
-following to download and silently install Wireshark with Npcap:
+Once connected to ws01, open POWERSHELL AS AN ADMINISTRATOR and install
+Wireshark using the official installer (Npcap is bundled — no separate download needed):
 
-# Download the latest Wireshark Windows x64 installer
-$url  = "https://2.na.dl.wireshark.org/win64/Wireshark-latest-x64.exe"
-$dest = "$env:TEMP\wireshark-installer.exe"
-Invoke-WebRequest -Uri $url -OutFile $dest
-
-# Silent install — accepts all defaults and installs Npcap automatically
-Start-Process -FilePath $dest -ArgumentList "/S" -Wait
+# Download the Wireshark installer — Npcap is bundled and installs in the same wizard
+Invoke-WebRequest -Uri "https://2.na.dl.wireshark.org/win64/Wireshark-latest-x64.exe" -OutFile "$env:TEMP\wireshark-installer.exe"
+Start-Process -FilePath "$env:TEMP\wireshark-installer.exe" -Wait
 
 # Verify the installation
 & "C:\Program Files\Wireshark\tshark.exe" --version
 
-* Invoke-WebRequest: Downloads the installer from the official Wireshark mirror.
-* /S flag: Runs the installer in silent mode — no GUI prompts, installs Npcap
-  automatically. Npcap is the Windows packet capture driver; without it,
-  Wireshark cannot open network interfaces.
+* Invoke-WebRequest: Downloads the latest Wireshark x64 installer from the
+  official Wireshark mirror.
+* Start-Process -Wait: Launches the installer GUI and holds the terminal until
+  the wizard completes.
+* Accept all defaults in the installer wizard. Npcap is a pre-checked component
+  in the wizard and installs automatically — no separate download required.
 * tshark --version: Confirms both Wireshark and the tshark CLI are installed.
 
 --------------------------------------------------------------------------------
 SECTION 5: THE WIRESHARK INTERFACE (ORIENTATION)
 --------------------------------------------------------------------------------
-When you open Wireshark you will see three main areas:
+When you open Wireshark you will see five main areas:
 
   Welcome Screen      — Lists all available network interfaces. Each interface
                         shows a live wave graph indicating current traffic
@@ -288,15 +282,15 @@ BACKGROUND
 
 STEPS
   1.  Start a new capture in Wireshark on your active interface
-  2.  Open a browser and navigate to: http://example.com
-      Use HTTP (not HTTPS) — HTTPS uses TLS which obscures the TCP data,
-      making the handshake harder to observe for learning purposes
+  2.  Open a browser and navigate to: http://neverssl.com
+      This site is purpose-built to never redirect to HTTPS, making it ideal
+      for observing plaintext TCP traffic and the handshake in Wireshark.
   3.  After the page loads, stop the capture
   4.  Open a terminal and run:
-         nslookup example.com
-      Note the IP address returned (it will be 93.184.216.34 for example.com)
+         nslookup neverssl.com
+      Note the IP address returned — it changes, so always look it up fresh.
   5.  In the Wireshark filter bar, type:
-         tcp and ip.addr == 93.184.216.34
+         tcp and ip.addr == <IP from nslookup>
       Press Enter
   6.  Find the three-packet sequence in order:
 
@@ -331,31 +325,33 @@ BACKGROUND
   cannot be read even if captured. This exercise demonstrates the exact
   vulnerability that made HTTPS mandatory for any site handling sensitive data.
 
-SETUP — START A LOCAL HTTP TEST SERVER (PowerShell)
-  Run the provided script: scripts\Start-HttpTestServer.ps1
-  This launches a minimal HTTP server on http://localhost:8080 that serves
-  a login form. Submit the form with any test credentials.
-  (See scripts\Start-HttpTestServer.ps1 for the full script and usage notes.)
+SETUP
+  No additional software required. This exercise uses a publicly accessible
+  deliberately vulnerable test banking application maintained for security
+  education. It runs over plain HTTP with no TLS.
 
-  Alternatively, use http://testphp.vulnweb.com — a deliberately vulnerable
-  web application maintained for security education purposes that runs over HTTP.
+  Target URL: http://zero.webappsecurity.com/login.html
+
+NOTE ON AZURE BACKGROUND TRAFFIC
+  Azure VMs generate continuous HTTP POST traffic to 168.63.129.16 (Azure's
+  internal health/metadata service). This will appear in your capture and
+  can obscure the login POST. The filter in Step 5 accounts for this.
 
 STEPS
-  1.  Start the local HTTP test server using the provided script, or navigate
-      to a known HTTP test site
-  2.  Start a capture in Wireshark on your loopback or active interface
-         For localhost: select the "Loopback: lo" interface (Mac/Linux)
-                        or the "Adapter for loopback traffic capture" (Windows)
-         For a remote HTTP site: use your regular Ethernet/Wi-Fi interface
-  3.  Submit a login form over HTTP with test credentials
-         Example: username = testuser | password = TestPassword123
+  1.  Open Wireshark and start a capture on your active Ethernet interface
+      (the same interface used in Exercises A and B — not loopback)
+  2.  Open a browser and navigate to:
+        http://zero.webappsecurity.com/login.html
+  3.  Enter any test credentials and click Sign In
+        (e.g. Username: testlogin | Password: Fakepassword1)
   4.  Stop the capture
   5.  In the filter bar, type:
-         http.request.method == POST
-      Press Enter
+        http.request.method == POST and http.host contains "zero"
+      Press Enter — this isolates the login POST and excludes Azure
+      background traffic to 168.63.129.16
   6.  Click the POST packet
   7.  In the Packet Detail pane, expand:
-         "Hypertext Transfer Protocol" → "HTML Form URL Encoded"
+        "Hypertext Transfer Protocol" → "HTML Form URL Encoded"
   8.  You will see the username and password fields in plaintext inside the packet
 
 WHAT TO RECORD FOR YOUR PORTFOLIO
@@ -377,7 +373,7 @@ BACKGROUND
 
 STEPS
   1.  Start a capture on your active interface
-  2.  Open a browser and navigate to any HTTP website (e.g. http://example.com)
+  2.  Open a browser and navigate to any HTTP website (e.g. http://neverssl.com)
   3.  Stop the capture after the page loads
   4.  In the filter bar, type:
          http
@@ -455,13 +451,6 @@ Before considering the lab complete, confirm each skill independently:
   [ ] File management
         Save a capture as .pcapng, close Wireshark completely, reopen it, and
         load the file. Confirm all packets are present.
-
-  [ ] Portfolio commits
-        Save three .pcapng files to the screenshots/ folder:
-          - dns-lookup-google.pcapng
-          - tcp-handshake-example.pcapng
-          - tcp-stream-follow.pcapng
-        Commit to GitHub with a README entry describing each one.
 
 --------------------------------------------------------------------------------
 SECTION 13: GIT COMMIT AND PUSH TO GITHUB
